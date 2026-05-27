@@ -1,0 +1,562 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Review Queue — quiethumans</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #0a0a0a;
+            color: #e0e0e0;
+            min-height: 100vh;
+        }
+
+        .topbar {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 1rem 2rem;
+            border-bottom: 1px solid #1e1e1e;
+            position: sticky;
+            top: 0;
+            background: #0a0a0a;
+            z-index: 10;
+        }
+        .topbar-left { display: flex; align-items: center; gap: 1.5rem; }
+        .topbar a { color: #555; font-size: 0.85rem; text-decoration: none; }
+        .topbar a:hover { color: #aaa; }
+        .topbar-title { font-size: 0.95rem; font-weight: 600; color: #fff; }
+        .queue-counter {
+            font-size: 0.8rem;
+            color: #666;
+            background: #1a1a1a;
+            padding: 0.25rem 0.6rem;
+            border-radius: 20px;
+        }
+        .queue-counter span { color: #eab308; font-weight: 600; }
+
+        .kbd-hint {
+            font-size: 0.75rem;
+            color: #444;
+            display: flex;
+            gap: 1rem;
+        }
+        .kbd { background: #1a1a1a; border: 1px solid #333; border-radius: 3px; padding: 0.1rem 0.4rem; color: #777; font-size: 0.7rem; }
+
+        /* Two-column layout */
+        .layout {
+            display: grid;
+            grid-template-columns: 1fr 380px;
+            height: calc(100vh - 57px);
+        }
+
+        /* Left: card list */
+        .card-list {
+            overflow-y: auto;
+            padding: 1.5rem 2rem;
+            border-right: 1px solid #141414;
+        }
+
+        .card {
+            background: #111;
+            border: 1px solid #1e1e1e;
+            border-radius: 10px;
+            padding: 1.25rem 1.5rem;
+            margin-bottom: 0.75rem;
+            cursor: pointer;
+            transition: border-color 0.15s, background 0.15s;
+            position: relative;
+        }
+        .card:hover { border-color: #333; }
+        .card.active { border-color: #3b82f6; background: #0d1a2e; }
+        .card.approved { opacity: 0.4; border-color: #15432b; }
+        .card.rejected { opacity: 0.4; border-color: #3a1515; }
+
+        .card-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; }
+        .card-name { font-size: 0.95rem; font-weight: 600; color: #fff; }
+        .card-hook { font-size: 0.8rem; color: #888; margin-top: 0.2rem; }
+        .ai-badge {
+            flex-shrink: 0;
+            font-size: 0.7rem;
+            font-weight: 700;
+            padding: 0.2rem 0.5rem;
+            border-radius: 20px;
+            white-space: nowrap;
+        }
+        .ai-badge.high { background: #14320f; color: #4ade80; border: 1px solid #1a4a15; }
+        .ai-badge.mid  { background: #2a2200; color: #facc15; border: 1px solid #3d3200; }
+        .ai-badge.low  { background: #2a1010; color: #f87171; border: 1px solid #3d1515; }
+
+        .card-url { font-size: 0.72rem; color: #3b6fa8; margin-top: 0.4rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+        .status-dot {
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            background: #444;
+            position: absolute;
+            top: 1.1rem;
+            right: 1rem;
+        }
+        .status-dot.approved { background: #22c55e; }
+        .status-dot.rejected { background: #ef4444; }
+
+        /* Right: detail panel */
+        .detail-panel {
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        .detail-scroll {
+            flex: 1;
+            overflow-y: auto;
+            padding: 1.5rem;
+        }
+
+        .empty-state {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            height: 100%;
+            color: #333;
+            font-size: 0.9rem;
+            text-align: center;
+        }
+
+        .detail-name { font-size: 1.2rem; font-weight: 700; color: #fff; margin-bottom: 0.25rem; }
+        .detail-hook { font-size: 0.9rem; color: #aaa; margin-bottom: 0.75rem; font-style: italic; }
+        .detail-url { font-size: 0.75rem; color: #3b82f6; text-decoration: none; word-break: break-all; display: block; margin-bottom: 1.25rem; }
+        .detail-url:hover { text-decoration: underline; }
+
+        .ai-score-row {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            padding: 0.75rem 1rem;
+            background: #111;
+            border: 1px solid #1e1e1e;
+            border-radius: 8px;
+            margin-bottom: 1.25rem;
+        }
+        .ai-score-label { font-size: 0.72rem; color: #555; text-transform: uppercase; letter-spacing: 0.05em; }
+        .ai-score-value { font-size: 1.3rem; font-weight: 700; }
+        .ai-score-value.high { color: #4ade80; }
+        .ai-score-value.mid  { color: #facc15; }
+        .ai-score-value.low  { color: #f87171; }
+        .ai-score-reason { font-size: 0.8rem; color: #666; line-height: 1.5; }
+
+        .field { margin-bottom: 1rem; }
+        .field-label { font-size: 0.7rem; color: #555; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.35rem; }
+        .field-value { font-size: 0.85rem; color: #ccc; line-height: 1.6; }
+
+        .tags { display: flex; flex-wrap: wrap; gap: 0.3rem; }
+        .tag {
+            background: #161616;
+            border: 1px solid #2a2a2a;
+            border-radius: 4px;
+            padding: 0.2rem 0.5rem;
+            font-size: 0.75rem;
+            color: #888;
+        }
+
+        /* Action bar */
+        .action-bar {
+            padding: 1rem 1.5rem;
+            border-top: 1px solid #1a1a1a;
+            background: #0d0d0d;
+        }
+        .score-row {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            margin-bottom: 0.75rem;
+        }
+        .score-row label { font-size: 0.75rem; color: #555; }
+        .score-select {
+            background: #1a1a1a;
+            border: 1px solid #2a2a2a;
+            border-radius: 6px;
+            color: #e0e0e0;
+            padding: 0.35rem 0.6rem;
+            font-size: 0.875rem;
+        }
+        .score-hint { font-size: 0.7rem; color: #444; }
+
+        .btn-row { display: flex; gap: 0.6rem; }
+        .btn {
+            flex: 1;
+            border: none;
+            border-radius: 7px;
+            padding: 0.6rem 1rem;
+            font-size: 0.875rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: opacity 0.15s, transform 0.05s;
+        }
+        .btn:hover { opacity: 0.85; }
+        .btn:active { transform: scale(0.98); }
+        .btn:disabled { opacity: 0.3; cursor: not-allowed; }
+        .btn-approve { background: #22c55e; color: #000; }
+        .btn-reject  { background: #ef4444; color: #fff; }
+        .btn-skip    { background: #1e1e1e; color: #777; flex: 0; padding: 0.6rem 1rem; }
+
+        .action-feedback {
+            font-size: 0.75rem;
+            text-align: center;
+            margin-top: 0.5rem;
+            min-height: 1.1em;
+            color: #555;
+        }
+        .action-feedback.ok { color: #22c55e; }
+        .action-feedback.err { color: #ef4444; }
+
+        .divider { border: none; border-top: 1px solid #1a1a1a; margin: 1rem 0; }
+    </style>
+</head>
+<body>
+
+<div class="topbar">
+    <div class="topbar-left">
+        <a href="/">← Home</a>
+        <span class="topbar-title">Review Queue</span>
+        <span class="queue-counter"><span id="pending-count">—</span> pending</span>
+    </div>
+    <div class="kbd-hint">
+        <span><span class="kbd">↑↓</span> navigate</span>
+        <span><span class="kbd">A</span> approve</span>
+        <span><span class="kbd">R</span> reject</span>
+        <span><span class="kbd">S</span> skip</span>
+    </div>
+</div>
+
+<div class="layout">
+    <div class="card-list" id="card-list">
+        <div style="color:#444; padding: 2rem; text-align:center;">Loading...</div>
+    </div>
+
+    <div class="detail-panel">
+        <div class="detail-scroll" id="detail-scroll">
+            <div class="empty-state">Select a person to review</div>
+        </div>
+        <div class="action-bar" id="action-bar" style="display:none">
+            <div class="score-row">
+                <label>Your score:</label>
+                <select class="score-select" id="score-select">
+                    <option value="9">9 — exceptional</option>
+                    <option value="8">8 — very interesting</option>
+                    <option value="7" selected>7 — interesting</option>
+                    <option value="6">6 — decent</option>
+                    <option value="5">5 — borderline</option>
+                    <option value="4">4 — not interesting</option>
+                    <option value="3">3 — weak</option>
+                </select>
+                <span class="score-hint">shown as interestingness rank</span>
+            </div>
+            <div class="btn-row">
+                <button class="btn btn-approve" id="btn-approve" onclick="doApprove()">Approve (A)</button>
+                <button class="btn btn-reject"  id="btn-reject"  onclick="doReject()">Reject (R)</button>
+                <button class="btn btn-skip"    id="btn-skip"    onclick="doSkip()">Skip (S)</button>
+            </div>
+            <div class="action-feedback" id="action-feedback"></div>
+        </div>
+    </div>
+</div>
+
+<script>
+let queue = [];
+let activeIdx = -1;
+let processing = false;
+
+// ── Data loading ──────────────────────────────────────────────────────────────
+
+async function loadQueue() {
+    try {
+        const res = await fetch('/api/review/queue');
+        const data = await res.json();
+        if (data.error) { showError(data.error); return; }
+        queue = data.pending || [];
+        updateCounter(queue.length);
+        renderList();
+        if (queue.length > 0) selectCard(0);
+    } catch (e) {
+        showError(e.message);
+    }
+}
+
+function showError(msg) {
+    document.getElementById('card-list').innerHTML =
+        `<div style="color:#f87171; padding:2rem; text-align:center;">${esc(msg)}</div>`;
+}
+
+// ── List rendering ────────────────────────────────────────────────────────────
+
+function renderList() {
+    if (queue.length === 0) {
+        document.getElementById('card-list').innerHTML =
+            '<div style="color:#333; padding:3rem; text-align:center;">Queue is empty — check back later.</div>';
+        document.getElementById('detail-scroll').innerHTML =
+            '<div class="empty-state">Nothing to review right now.</div>';
+        document.getElementById('action-bar').style.display = 'none';
+        return;
+    }
+
+    document.getElementById('card-list').innerHTML = queue.map((p, i) => {
+        const score = p.interestingness_score;
+        const cls = score >= 7 ? 'high' : score >= 5 ? 'mid' : 'low';
+        const badge = score != null ? `<span class="ai-badge ${cls}">AI ${score}/10</span>` : '';
+        return `
+        <div class="card" id="card-${i}" onclick="selectCard(${i})">
+            <div class="status-dot" id="dot-${i}"></div>
+            <div class="card-row">
+                <div>
+                    <div class="card-name">${esc(p.name || 'Unknown')}</div>
+                    <div class="card-hook">${esc(p.hook || p.one_liner || '')}</div>
+                    <div class="card-url">${esc(p.homepage_url)}</div>
+                </div>
+                ${badge}
+            </div>
+        </div>`;
+    }).join('');
+}
+
+function updateCounter(n) {
+    document.getElementById('pending-count').textContent = n;
+}
+
+// ── Detail panel ─────────────────────────────────────────────────────────────
+
+function selectCard(idx) {
+    if (idx < 0 || idx >= queue.length) return;
+    activeIdx = idx;
+
+    // Highlight active card
+    document.querySelectorAll('.card').forEach((el, i) => {
+        el.classList.toggle('active', i === idx);
+    });
+
+    const p = queue[idx];
+    const score = p.interestingness_score;
+    const scoreCls = score >= 7 ? 'high' : score >= 5 ? 'mid' : 'low';
+
+    // Parse AI reason — strip "[AI X/10] " prefix if present
+    let aiReason = p.review_reason || '';
+    aiReason = aiReason.replace(/^\[AI \d+\/10\]\s*/, '');
+
+    const projects = parseList(p.projects).slice(0, 8)
+        .map(p => typeof p === 'object' ? (p.name || '') : p)
+        .filter(Boolean);
+    const interests = parseList(p.creative_interests).slice(0, 8);
+    const makes = parseList(p.makes).slice(0, 6);
+
+    document.getElementById('detail-scroll').innerHTML = `
+        <div class="detail-name">${esc(p.name || 'Unknown')}</div>
+        ${p.hook ? `<div class="detail-hook">${esc(p.hook)}</div>` : ''}
+        <a class="detail-url" href="${esc(p.homepage_url)}" target="_blank" rel="noopener">
+            ${esc(p.homepage_url)} ↗
+        </a>
+
+        ${score != null ? `
+        <div class="ai-score-row">
+            <div>
+                <div class="ai-score-label">AI pre-score</div>
+                <div class="ai-score-value ${scoreCls}">${score}<span style="font-size:0.8rem; font-weight:400; color:#444;">/10</span></div>
+            </div>
+            <div class="ai-score-reason">${esc(aiReason)}</div>
+        </div>` : ''}
+
+        ${p.one_liner ? `
+        <div class="field">
+            <div class="field-label">One-liner</div>
+            <div class="field-value">${esc(p.one_liner)}</div>
+        </div>` : ''}
+
+        ${p.work_summary ? `
+        <div class="field">
+            <div class="field-label">Work summary</div>
+            <div class="field-value">${esc(p.work_summary)}</div>
+        </div>` : ''}
+
+        ${p.current_focus ? `
+        <div class="field">
+            <div class="field-label">Currently working on</div>
+            <div class="field-value">${esc(p.current_focus)}</div>
+        </div>` : ''}
+
+        ${p.unique_angle ? `
+        <div class="field">
+            <div class="field-label">What makes them unique</div>
+            <div class="field-value">${esc(p.unique_angle)}</div>
+        </div>` : ''}
+
+        ${projects.length > 0 ? `
+        <div class="field">
+            <div class="field-label">Projects</div>
+            <div class="tags">${projects.map(t => `<span class="tag">${esc(t)}</span>`).join('')}</div>
+        </div>` : ''}
+
+        ${interests.length > 0 ? `
+        <div class="field">
+            <div class="field-label">Creative interests</div>
+            <div class="tags">${interests.map(t => `<span class="tag">${esc(t)}</span>`).join('')}</div>
+        </div>` : ''}
+
+        ${makes.length > 0 ? `
+        <div class="field">
+            <div class="field-label">Makes</div>
+            <div class="tags">${makes.map(t => `<span class="tag">${esc(t)}</span>`).join('')}</div>
+        </div>` : ''}
+    `;
+
+    // Pre-fill score selector to match AI score (rounded)
+    if (score != null) {
+        const sel = document.getElementById('score-select');
+        const clamped = Math.min(9, Math.max(3, Math.round(score)));
+        sel.value = clamped;
+    }
+
+    document.getElementById('action-bar').style.display = 'block';
+    setFeedback('');
+
+    // Scroll card into view
+    const card = document.getElementById(`card-${idx}`);
+    if (card) card.scrollIntoView({ block: 'nearest' });
+}
+
+// ── Actions ───────────────────────────────────────────────────────────────────
+
+function setFeedback(msg, type = '') {
+    const el = document.getElementById('action-feedback');
+    el.textContent = msg;
+    el.className = 'action-feedback' + (type ? ' ' + type : '');
+}
+
+function disableButtons(disabled) {
+    ['btn-approve', 'btn-reject', 'btn-skip'].forEach(id => {
+        document.getElementById(id).disabled = disabled;
+    });
+}
+
+async function doApprove() {
+    if (processing || activeIdx < 0) return;
+    const p = queue[activeIdx];
+    const score = parseInt(document.getElementById('score-select').value);
+    processing = true;
+    disableButtons(true);
+    setFeedback('Approving…');
+
+    try {
+        const res = await fetch(`/api/review/${p.id}/approve`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ score })
+        });
+        const data = await res.json();
+        if (data.error) { setFeedback(data.error, 'err'); return; }
+
+        markCard(activeIdx, 'approved');
+        setFeedback(`✓ Approved with score ${score}`, 'ok');
+        advanceQueue();
+    } catch (e) {
+        setFeedback(e.message, 'err');
+    } finally {
+        processing = false;
+        disableButtons(false);
+    }
+}
+
+async function doReject() {
+    if (processing || activeIdx < 0) return;
+    const p = queue[activeIdx];
+    processing = true;
+    disableButtons(true);
+    setFeedback('Rejecting…');
+
+    try {
+        const res = await fetch(`/api/review/${p.id}/reject`, { method: 'POST' });
+        const data = await res.json();
+        if (data.error) { setFeedback(data.error, 'err'); return; }
+
+        markCard(activeIdx, 'rejected');
+        setFeedback('✗ Rejected', 'ok');
+        advanceQueue();
+    } catch (e) {
+        setFeedback(e.message, 'err');
+    } finally {
+        processing = false;
+        disableButtons(false);
+    }
+}
+
+function doSkip() {
+    if (activeIdx < 0) return;
+    advanceQueue();
+}
+
+function markCard(idx, status) {
+    const card = document.getElementById(`card-${idx}`);
+    const dot  = document.getElementById(`dot-${idx}`);
+    if (card) { card.classList.add(status); card.classList.remove('active'); }
+    if (dot)  { dot.classList.add(status); }
+    updateCounter(queue.filter((_, i) => !document.getElementById(`card-${i}`)?.classList.contains('approved')
+        && !document.getElementById(`card-${i}`)?.classList.contains('rejected')).length);
+}
+
+function advanceQueue() {
+    // Find next unresolved card
+    let next = activeIdx + 1;
+    while (next < queue.length) {
+        const card = document.getElementById(`card-${next}`);
+        if (!card?.classList.contains('approved') && !card?.classList.contains('rejected')) break;
+        next++;
+    }
+    if (next < queue.length) {
+        selectCard(next);
+    } else {
+        // Try going back
+        let prev = activeIdx - 1;
+        while (prev >= 0) {
+            const card = document.getElementById(`card-${prev}`);
+            if (!card?.classList.contains('approved') && !card?.classList.contains('rejected')) break;
+            prev--;
+        }
+        if (prev >= 0) selectCard(prev);
+    }
+}
+
+// ── Keyboard shortcuts ────────────────────────────────────────────────────────
+
+document.addEventListener('keydown', e => {
+    if (e.target.tagName === 'SELECT' || e.target.tagName === 'INPUT') return;
+    if (e.key === 'ArrowDown' || e.key === 'j') { selectCard(activeIdx + 1); e.preventDefault(); }
+    else if (e.key === 'ArrowUp' || e.key === 'k') { selectCard(activeIdx - 1); e.preventDefault(); }
+    else if (e.key === 'a' || e.key === 'A') doApprove();
+    else if (e.key === 'r' || e.key === 'R') doReject();
+    else if (e.key === 's' || e.key === 'S') doSkip();
+});
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+function parseList(val) {
+    if (Array.isArray(val)) return val;
+    if (typeof val === 'string') {
+        try { const p = JSON.parse(val); if (Array.isArray(p)) return p; } catch (_) {}
+    }
+    return [];
+}
+
+function esc(str) {
+    if (!str) return '';
+    const d = document.createElement('div');
+    d.textContent = str;
+    return d.innerHTML;
+}
+
+// ── Init ──────────────────────────────────────────────────────────────────────
+
+loadQueue();
+</script>
+</body>
+</html>
