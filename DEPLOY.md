@@ -30,8 +30,8 @@ echo '/swapfile none swap sw 0 0' >> /etc/fstab
 ufw allow OpenSSH && ufw allow 80 && ufw allow 443 && ufw --force enable
 
 # 4. Get the code (public repo)
-git clone https://github.com/ankitaggarwal/quiethumans.git
-cd quiethumans
+git clone https://github.com/ankitaggarwal/quiethumans.fyi.git
+cd quiethumans.fyi
 ```
 
 ## Add the secrets (never committed to git)
