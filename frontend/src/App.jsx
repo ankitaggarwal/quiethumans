@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { Search, ExternalLink, RefreshCw, Sparkles, ChevronDown, ChevronUp, X, Activity, CheckCircle, XCircle, AlertCircle, Loader } from 'lucide-react'
+import { Search, ExternalLink, RefreshCw, Sparkles, ChevronDown, ChevronUp, X, Activity, CheckCircle, XCircle, AlertCircle, Loader, Laptop, ArrowRight } from 'lucide-react'
 import './App.css'
 
 const API_URL = '/api'
@@ -16,7 +16,6 @@ function App() {
   const [isTyping, setIsTyping] = useState(false)
   const [error, setError] = useState(null)
   const [expandedId, setExpandedId] = useState(null)
-  const [showHowItWorks, setShowHowItWorks] = useState(false)
   const [searchMode, setSearchMode] = useState(false)
   const [showCrawlerLog, setShowCrawlerLog] = useState(false)
   const [crawlerEvents, setCrawlerEvents] = useState([])
@@ -27,6 +26,12 @@ function App() {
   const [featuredPerson, setFeaturedPerson] = useState(null)
   const [featuredDismissed, setFeaturedDismissed] = useState(false)
   const [featuredExpanded, setFeaturedExpanded] = useState(false)
+  const [featuredOpen, setFeaturedOpen] = useState(false)
+
+  // live "the machine, right now" band + educational funnel page
+  const [crawlStats, setCrawlStats] = useState(null)
+  const [funnel, setFunnel] = useState(null)
+  const [view, setView] = useState(() => (typeof window !== 'undefined' && window.location.hash.replace('#', '') === 'funnel' ? 'funnel' : 'home'))
 
   // Infinite scroll state
   const [offset, setOffset] = useState(0)
@@ -45,7 +50,42 @@ function App() {
     fetchCrawlerEvents()
     fetchCategories()
     fetchFeaturedPerson()
+    fetchCrawlStats()
+    fetchFunnel()
   }, [])
+
+  // keep the view in sync with the URL hash (shareable #funnel)
+  useEffect(() => {
+    const onHash = () => setView(window.location.hash.replace('#', '') === 'funnel' ? 'funnel' : 'home')
+    window.addEventListener('hashchange', onHash)
+    return () => window.removeEventListener('hashchange', onHash)
+  }, [])
+
+  const goTo = (next) => {
+    window.location.hash = next === 'funnel' ? 'funnel' : ''
+    setView(next)
+    window.scrollTo({ top: 0, behavior: 'smooth' })
+  }
+
+  const fetchCrawlStats = async () => {
+    try {
+      const res = await fetch(`${API_URL}/crawl/stats`)
+      const data = await res.json()
+      if (!data.error) setCrawlStats(data)
+    } catch (e) {
+      console.error('Failed to fetch crawl stats:', e)
+    }
+  }
+
+  const fetchFunnel = async () => {
+    try {
+      const res = await fetch(`${API_URL}/pipeline/funnel`)
+      const data = await res.json()
+      if (!data.error) setFunnel(data)
+    } catch (e) {
+      console.error('Failed to fetch funnel:', e)
+    }
+  }
 
   const fetchFeaturedPerson = async () => {
     try {
@@ -112,7 +152,11 @@ function App() {
 
   // Background stats polling (every 10 seconds) to catch new approvals
   useEffect(() => {
-    statsPollRef.current = setInterval(fetchStatsQuietly, 10000)
+    statsPollRef.current = setInterval(() => {
+      fetchStatsQuietly()
+      fetchCrawlStats()
+      fetchCrawlerEvents()
+    }, 10000)
     return () => {
       if (statsPollRef.current) {
         clearInterval(statsPollRef.current)
@@ -443,47 +487,54 @@ function App() {
 
   return (
     <div className="app">
-      <header className="header">
-        <h1>discover interesting humans</h1>
-        <p className="tagline">by what they build, not how they brand</p>
+      {/* floaty decorative blobs */}
+      <span className="blob b1" aria-hidden="true" />
+      <span className="blob b2" aria-hidden="true" />
+      <span className="blob b3" aria-hidden="true" />
+      <span className="blob b4" aria-hidden="true" />
+      <span className="blob b5" aria-hidden="true" />
 
-        <button
-          className={`how-it-works-toggle ${showHowItWorks ? 'active' : ''}`}
-          onClick={() => setShowHowItWorks(!showHowItWorks)}
-        >
-          <span>how it works</span>
-          <ChevronDown size={14} className={`toggle-chevron ${showHowItWorks ? 'open' : ''}`} />
-        </button>
-
-        {showHowItWorks && (
-          <div className="how-it-works">
-            <div className="how-step">
-              <span className="step-number">1</span>
-              <p>We crawl <em>personal websites</em> — people who care about sharing their real work</p>
-            </div>
-            <div className="how-step">
-              <span className="step-number">2</span>
-              <p>AI reads each site to find what's <em>genuinely interesting</em> about their work</p>
-            </div>
-            <div className="how-step">
-              <span className="step-number">3</span>
-              <p>Search by meaning — try <em>"building tools for thought"</em> and we'll get it</p>
-            </div>
+      <nav className="topnav">
+        <div className="topnav-inner">
+          <button className="topnav-brand" onClick={() => goTo('home')}>
+            quiet <span className="accent">humans</span><span className="dot">.</span>
+          </button>
+          <div className="topnav-links">
+            <button className={view === 'home' ? 'active' : ''} onClick={() => goTo('home')}>explore</button>
+            <button className={view === 'funnel' ? 'active' : ''} onClick={() => goTo('funnel')}>the funnel</button>
           </div>
-        )}
-      </header>
+        </div>
+      </nav>
 
-      <main className="main">
-        <div className="controls">
+      {view === 'funnel' ? (
+        <FunnelPage funnel={funnel} crawlStats={crawlStats} onExplore={() => goTo('home')} />
+      ) : (
+      <>
+      <header className="header">
+        <div className="brand-row">
+          <h1 className="anim-up d1">
+            quiet <span className="accent">humans</span><span className="dot">.</span>
+          </h1>
+          <Pip className="anim d2" />
+        </div>
+
+        <p className="tagline anim-up d3">
+          a search engine for the <span className="u-wavy">interesting people</span> the internet forgot.
+        </p>
+
+        {/* SEARCH — the primary action the moment you land */}
+        <div className="hero-search anim-up d4">
           <form className="search-form" onSubmit={handleSearch}>
             <div className="search-box">
-              <Search className="search-icon" size={18} />
+              <Search className="search-icon" size={20} />
               <input
                 type="text"
-                placeholder="search by what people are building..."
+                placeholder="search by what people make — e.g. “tools for thought”"
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
                 className="search-input"
+                aria-label="Search the index"
+                autoFocus
               />
               {query && (
                 <button type="button" className="clear-btn" onClick={clearSearch} aria-label="Clear search">
@@ -492,7 +543,6 @@ function App() {
               )}
             </div>
           </form>
-
           <button
             className="shuffle-btn"
             onClick={shufflePeople}
@@ -504,6 +554,22 @@ function App() {
           </button>
         </div>
 
+        <div className="hero-examples anim-up d5">
+          <span className="hero-examples-label">try</span>
+          {['makes generative art', 'tools for thought', 'cozy games', 'self-hosting'].map((ex) => (
+            <button key={ex} className="example-chip" onClick={() => setQuery(ex)}>{ex}</button>
+          ))}
+        </div>
+
+        <LiveBand
+          stats={stats}
+          crawlStats={crawlStats}
+          events={crawlerEvents}
+          onSeeFunnel={() => goTo('funnel')}
+        />
+      </header>
+
+      <main className="main">
         {categories.length > 0 && !searchMode && (
           <div className="category-filters">
             {categories.map((cat) => (
@@ -539,8 +605,8 @@ function App() {
 
         {loading ? (
           <div className="loading">
-            <Sparkles className="loading-icon" size={24} />
-            <p>finding interesting work...</p>
+            <Pip small />
+            <p>finding interesting work…</p>
           </div>
         ) : (
           <div className="people-grid">
@@ -559,12 +625,12 @@ function App() {
                   <div className="expanded-content">
                     {/* One-liner expansion */}
                     {person.one_liner && person.one_liner !== getDisplayHook(person) && (
-                      <p className="one-liner-detail">{person.one_liner}</p>
+                      <p className="one-liner-detail">{clean(person.one_liner)}</p>
                     )}
 
                     {/* Work summary for those who want more */}
                     {person.work_summary && (
-                      <p className="work-summary">{person.work_summary}</p>
+                      <p className="work-summary">{clean(person.work_summary)}</p>
                     )}
 
                     {person.current_focus && (
@@ -573,7 +639,7 @@ function App() {
                           <span className="status-dot"></span>
                           <span className="current-label">Currently</span>
                         </div>
-                        <p className="current-focus-text">{person.current_focus}</p>
+                        <p className="current-focus-text">{clean(person.current_focus)}</p>
                       </div>
                     )}
 
@@ -581,9 +647,9 @@ function App() {
                       <div className="projects">
                         {person.projects.slice(0, 2).map((project, i) => (
                           <div key={i} className="project">
-                            <span className="project-name">{project.name}</span>
+                            <span className="project-name">{clean(project.name)}</span>
                             {project.description && (
-                              <span className="project-desc"> — {project.description}</span>
+                              <span className="project-desc"> — {clean(project.description)}</span>
                             )}
                           </div>
                         ))}
@@ -594,7 +660,7 @@ function App() {
 
                 <div className="card-footer">
                   <div className="person-info">
-                    <span className="person-name">{person.name || 'Anonymous builder'}</span>
+                    <span className="person-name">{clean(person.name) || 'Anonymous builder'}</span>
                     {person.category && person.category !== 'other' && (
                       <span className={`category-tag category-${person.category}`}>
                         {person.category}
@@ -627,13 +693,14 @@ function App() {
         {/* End of results */}
         {!loading && !loadingMore && !hasMore && people.length > 0 && !searchMode && (
           <div className="end-of-results">
-            <p>you've seen everyone</p>
+            <p>that's everyone we've found so far ✦</p>
           </div>
         )}
 
         {!loading && people.length === 0 && (
           <div className="empty">
-            <p>{error ? "couldn't load results" : "no one found with that search"}</p>
+            <Pip small />
+            <p>{error ? "something went wrong — couldn't load" : "hmm, no one found with that search"}</p>
             <button onClick={clearSearch} className="reset-btn">
               {error ? 'try again' : 'show everyone'}
             </button>
@@ -641,8 +708,12 @@ function App() {
         )}
       </main>
 
+      <StorySections />
+      </>
+      )}
+
       <footer className="footer">
-        <p>discovering interesting humans across the web</p>
+        <p><span className="brand-dot" />discovering the interesting people the internet forgot</p>
       </footer>
 
       {/* Crawler Status Panel */}
@@ -652,13 +723,18 @@ function App() {
         onToggle={() => setShowCrawlerLog(!showCrawlerLog)}
       />
 
-      {/* Person of the Day */}
-      {featuredPerson && !featuredDismissed && (
+      {/* Person of the Day — collapsed to a pill by default so it never covers cards */}
+      {view === 'home' && featuredPerson && !featuredDismissed && !featuredOpen && (
+        <button className="featured-pill" onClick={() => setFeaturedOpen(true)}>
+          <Sparkles size={14} /> person of the day
+        </button>
+      )}
+      {view === 'home' && featuredPerson && !featuredDismissed && featuredOpen && (
         <div
           className={`featured-widget ${featuredExpanded ? 'expanded' : ''}`}
           onClick={() => setFeaturedExpanded(!featuredExpanded)}
         >
-          <button className="featured-dismiss" onClick={(e) => { e.stopPropagation(); setFeaturedDismissed(true) }}>
+          <button className="featured-dismiss" onClick={(e) => { e.stopPropagation(); setFeaturedOpen(false); setFeaturedExpanded(false) }}>
             <X size={12} />
           </button>
           <div className="featured-label">
@@ -670,20 +746,20 @@ function App() {
           {featuredExpanded && (
             <div className="featured-expanded">
               {featuredPerson.work_summary && (
-                <p className="featured-summary">{featuredPerson.work_summary}</p>
+                <p className="featured-summary">{clean(featuredPerson.work_summary)}</p>
               )}
               {featuredPerson.current_focus && (
                 <div className="featured-focus">
                   <span className="status-dot"></span>
-                  <span>{featuredPerson.current_focus}</span>
+                  <span>{clean(featuredPerson.current_focus)}</span>
                 </div>
               )}
               {featuredPerson.projects?.length > 0 && (
                 <div className="featured-projects">
                   {featuredPerson.projects.slice(0, 2).map((project, i) => (
                     <div key={i} className="featured-project">
-                      <span className="project-name">{project.name}</span>
-                      {project.description && <span className="project-desc"> — {project.description}</span>}
+                      <span className="project-name">{clean(project.name)}</span>
+                      {project.description && <span className="project-desc"> — {clean(project.description)}</span>}
                     </div>
                   ))}
                 </div>
@@ -691,7 +767,7 @@ function App() {
             </div>
           )}
           <div className="featured-footer">
-            <span className="person-name">{featuredPerson.name}</span>
+            <span className="person-name">{clean(featuredPerson.name)}</span>
             <a
               href={featuredPerson.homepage_url}
               target="_blank"
@@ -704,6 +780,155 @@ function App() {
           </div>
         </div>
       )}
+    </div>
+  )
+}
+
+// Pip — the little crawler bot mascot (pure CSS)
+function Pip({ small = false, className = '' }) {
+  return (
+    <div className={`bot bot--bob ${small ? 'bot--sm' : ''} ${className}`} aria-hidden="true">
+      <div className="antenna" />
+      <div className="body" />
+      <div className="face"><span className="eye" /><span className="eye" /></div>
+      <div className="cheek l" /><div className="cheek r" />
+      <div className="foot l" /><div className="foot r" />
+    </div>
+  )
+}
+
+// ---- LiveBand: "the machine, right now" ----------------------------------
+function LiveBand({ stats, crawlStats, events, onSeeFunnel }) {
+  const grouped = groupEventsByUrl(events || [])
+  const active = grouped.filter(g => g.status === 'processing')
+  const live = isRecentlyActive(events) || active.length > 0
+  const nowDomain = active[0]?.domain
+  const lastFound = grouped.find(g => g.status === 'approved')?.name
+
+  const approved = crawlStats?.people?.approved ?? stats?.total_people ?? 0
+  const inReview = crawlStats?.people?.pending_review ?? 0
+  const crawled = crawlStats?.queue?.crawled ?? 0
+  const queued = crawlStats?.queue?.pending ?? 0
+
+  return (
+    <section className="live-band anim-up d6">
+      <div className="live-now">
+        <span className={`live-pip-dot ${live ? 'on' : ''}`} />
+        {live && nowDomain ? (
+          <span>reading <strong>{nowDomain}</strong> right now</span>
+        ) : lastFound ? (
+          <span>just found <strong>{lastFound}</strong></span>
+        ) : (
+          <span>quietly crawling the web</span>
+        )}
+      </div>
+
+      <div className="live-stats">
+        <LiveTile n={approved} label="searchable" accent="mint" />
+        <LiveTile n={inReview} label="in review" accent="sky" />
+        <LiveTile n={crawled} label="read" accent="coral" />
+        <LiveTile n={queued} label="queued" accent="lav" />
+      </div>
+
+      <div className="live-meta">
+        <span className="local-badge"><Laptop size={14} /> one Mac · zero cloud AI</span>
+        <button className="link-arrow" onClick={onSeeFunnel}>how we choose <ArrowRight size={14} /></button>
+      </div>
+    </section>
+  )
+}
+
+function LiveTile({ n, label, accent }) {
+  return (
+    <div className={`live-tile tile-${accent}`}>
+      <span className="live-tile-n"><AnimatedNumber value={n} /></span>
+      <span className="live-tile-label">{label}</span>
+    </div>
+  )
+}
+
+// ---- StorySections: the deck's narrative, condensed --------------------------
+function StorySections() {
+  return (
+    <div className="story">
+      <section className="story-band band-cream">
+        <span className="kicker">the problem</span>
+        <h2>the web rewards the <span className="u-wavy">loud</span>.</h2>
+        <p>the people quietly building the most interesting things never trend — no threads, no “top 100” lists, just a personal site and real work.</p>
+      </section>
+
+      <section className="story-band band-mint">
+        <span className="kicker">the idea</span>
+        <h2>search people by <span className="u-wavy">what they make</span>.</h2>
+        <p>not <i>“react developer, 5 yrs experience”</i> — but <b>“makes generative art from git commits.”</b> we read their work, you search it by meaning.</p>
+      </section>
+
+      <section className="story-band band-ink">
+        <span className="kicker">the twist</span>
+        <h2>…and it all runs on <span className="mark">one Mac.</span></h2>
+        <p>no cloud AI. Gemma + EmbeddingGemma + Qdrant + Postgres + the crawler, all on a single machine at home. free, private, and a little stubborn.</p>
+      </section>
+    </div>
+  )
+}
+
+// ---- FunnelPage: educational "how selectively Pip puts pages out" ------------
+function FunnelPage({ funnel, crawlStats, onExplore }) {
+  const q = funnel?.queue || crawlStats?.queue || {}
+  const p = funnel?.people || crawlStats?.people || {}
+
+  const discovered = (q.pending || 0) + (q.in_progress || 0) + (q.crawled || 0) + (q.failed || 0)
+  const crawled = q.crawled || 0
+  const profiled = (p.approved || 0) + (p.pending_review || 0) + (p.rejected || 0)
+  const reviewed = (p.approved || 0) + (p.rejected || 0)
+  const approved = p.approved || 0
+
+  const stages = [
+    { key: 'discovered', n: discovered, color: 'lav',   title: 'discovered',  blurb: 'URLs we find from Hacker News, GitHub “awesome” lists, webrings, blogrolls & now-pages.' },
+    { key: 'crawled',    n: crawled,    color: 'sky',    title: 'read',        blurb: 'the crawler visits and reads the site — about, projects, now, and blog pages.', note: (q.pending ? `${q.pending.toLocaleString()} still waiting their turn` : null) },
+    { key: 'profiled',   n: profiled,   color: 'coral',  title: 'profiled',    blurb: 'a tiny local model reads the pages and writes up who the person is and what they build.' },
+    { key: 'reviewed',   n: reviewed,   color: 'sun',    title: 'reviewed',    blurb: 'kept or set aside — is this a real person doing genuinely interesting work?', note: (p.pending_review ? `${p.pending_review} still in review` : null) },
+    { key: 'approved',   n: approved,   color: 'mint',   title: 'searchable',  blurb: 'approved, embedded as a vector, and live in semantic search.' },
+  ]
+  // log scale: the range (thousands → tens) is too wide for a linear bar
+  const lmax = Math.log(Math.max(discovered, 1) + 1)
+
+  return (
+    <div className="funnel-page">
+      <header className="funnel-head">
+        <span className="kicker">how it works, in numbers</span>
+        <h1>we're <span className="accent">picky</span>.</h1>
+        <p className="tagline">thousands of URLs go in. only a few real, interesting humans come out. here’s every stage and how many make it through.</p>
+      </header>
+
+      <div className="funnel">
+        {stages.map((s, i) => {
+          const prev = i === 0 ? null : stages[i - 1].n
+          const pct = prev ? Math.round((s.n / Math.max(prev, 1)) * 100) : null
+          const width = Math.max(16, Math.round((Math.log(s.n + 1) / lmax) * 100))
+          return (
+            <div className="funnel-row" key={s.key} style={{ animationDelay: `${i * 0.09}s` }}>
+              <div className="funnel-meta">
+                <span className="funnel-stage-name">{s.title}</span>
+                <span className="funnel-count"><AnimatedNumber value={s.n} /></span>
+              </div>
+              <div className="funnel-bar-track">
+                <div className={`funnel-bar bar-${s.color}`} style={{ width: `${width}%` }}>
+                  <span className="funnel-bar-n">{s.n.toLocaleString()}</span>
+                </div>
+                {pct !== null && <span className="funnel-pct">{pct}% of previous stage</span>}
+              </div>
+              <p className="funnel-blurb">{s.blurb}{s.note && <span className="funnel-note"> · {s.note}</span>}</p>
+            </div>
+          )
+        })}
+      </div>
+
+      <div className="funnel-kicker-line">
+        <Pip small />
+        <p>that’s a <strong>{discovered ? Math.max(1, Math.round(discovered / Math.max(approved, 1))) : '—'}-to-1</strong> filter from discovered URL to searchable human.</p>
+        <button className="reset-btn" onClick={onExplore}>explore who made it through</button>
+      </div>
     </div>
   )
 }
@@ -733,26 +958,47 @@ function AnimatedNumber({ value }) {
   return <>{display.toLocaleString()}</>
 }
 
+// Repair display-only mojibake (e.g. "KateÅ™ina MedvÄ›dovÃ¡" → "Kateřina Medvědová").
+// Maps each char back to its byte (Latin-1 + the cp1252 0x80-0x9F range) and re-decodes
+// as UTF-8. The strict decoder bails on anything that isn't real mojibake, so correct
+// Unicode (Søren, Zoë, 北京, smart quotes, emoji) passes through untouched.
+const CP1252 = { 0x20ac: 0x80, 0x201a: 0x82, 0x0192: 0x83, 0x201e: 0x84, 0x2026: 0x85, 0x2020: 0x86, 0x2021: 0x87, 0x02c6: 0x88, 0x2030: 0x89, 0x0160: 0x8a, 0x2039: 0x8b, 0x0152: 0x8c, 0x017d: 0x8e, 0x2018: 0x91, 0x2019: 0x92, 0x201c: 0x93, 0x201d: 0x94, 0x2022: 0x95, 0x2013: 0x96, 0x2014: 0x97, 0x02dc: 0x98, 0x2122: 0x99, 0x0161: 0x9a, 0x203a: 0x9b, 0x0153: 0x9c, 0x017e: 0x9e, 0x0178: 0x9f }
+function clean(text) {
+  if (!text || !/[^\x00-\x7f]/.test(text)) return text
+  try {
+    const bytes = []
+    for (const ch of text) {
+      const cp = ch.codePointAt(0)
+      if (cp <= 0xff) bytes.push(cp)
+      else if (CP1252[cp] != null) bytes.push(CP1252[cp])
+      else return text
+    }
+    return new TextDecoder('utf-8', { fatal: true }).decode(Uint8Array.from(bytes))
+  } catch {
+    return text
+  }
+}
+
 function getDisplayHook(person) {
   // For search results, use the search snippet if it's good
   if (person.search_snippet && !person.search_snippet.toLowerCase().includes('no match')) {
-    return person.search_snippet
+    return clean(person.search_snippet)
   }
 
   // Use hook if available (new field)
   if (person.hook) {
-    return person.hook
+    return clean(person.hook)
   }
 
   // Fall back to one_liner (show complete, no truncation)
   if (person.one_liner) {
-    return person.one_liner
+    return clean(person.one_liner)
   }
 
   // Last resort: first sentence of work_summary
   if (person.work_summary) {
     const firstSentence = person.work_summary.split('.')[0]
-    return firstSentence + '.'
+    return clean(firstSentence + '.')
   }
 
   return 'Exploring something interesting...'

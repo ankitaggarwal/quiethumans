@@ -121,6 +121,31 @@ async def crawl_stats():
         return {"error": str(e)}
 
 
+@app.get("/api/pipeline/funnel")
+async def pipeline_funnel(response: Response):
+    """Cumulative per-stage counts for the educational pipeline funnel.
+
+    Read-only aggregate over crawler_events (one row per URL per stage),
+    plus queue and people totals, so the UI can show how selectively URLs
+    advance from discovery to an approved, searchable profile.
+    """
+    response.headers["Cache-Control"] = "public, max-age=15"
+    try:
+        with get_db() as conn:
+            if not conn:
+                return {"error": "Database not connected"}
+            cur = conn.cursor()
+            cur.execute("SELECT event_type, COUNT(*) FROM crawler_events GROUP BY event_type")
+            events = {row[0]: row[1] for row in cur.fetchall()}
+            cur.execute("SELECT status, COUNT(*) FROM crawl_queue GROUP BY status")
+            queue = {row[0]: row[1] for row in cur.fetchall()}
+            cur.execute("SELECT status, COUNT(*) FROM people GROUP BY status")
+            people = {row[0]: row[1] for row in cur.fetchall()}
+        return {"events": events, "queue": queue, "people": people}
+    except Exception as e:
+        return {"error": str(e)}
+
+
 class AddUrlsRequest(BaseModel):
     urls: list[str]
     source: str = "api"
@@ -258,6 +283,14 @@ async def get_featured_person(response: Response):
         return {"person": None}
 
 
+# Minimum cosine score for a semantic match to count as relevant. Calibrated against
+# the live index: genuine matches sit ~0.40-0.55, the weak long tail ~0.25-0.33. At the
+# old 0.2 (plus a top-5 unfiltered fallback) almost every creative profile leaked through,
+# so a query like "makes generative art" returned ~everyone. ~0.35 keeps the real cluster
+# and returns nothing when there's truly no match (then keyword fallback runs).
+SEMANTIC_SCORE_MIN = 0.35
+
+
 @app.get("/api/search")
 async def search(
     q: str = Query(..., min_length=2, description="Search query"),
@@ -272,9 +305,10 @@ async def search(
             # Over-fetch and deduplicate: a person may match via multiple points.
             all_matches = semantic_search(q, top_k=max(limit * 3, 30))
             if all_matches:
-                matches = [m for m in all_matches if m.get("score", 0) >= 0.2]
-                if not matches:
-                    matches = all_matches[:5]  # Fallback to top 5 unfiltered
+                # Keep only genuinely relevant matches; no unfiltered fallback (that was
+                # what padded weak queries with "everything"). If none clear the bar,
+                # results stays empty and the keyword fallback below takes over.
+                matches = [m for m in all_matches if m.get("score", 0) >= SEMANTIC_SCORE_MIN]
 
                 # Deduplicate: keep best rank per person; track matched project if any.
                 rank, matched_project = {}, {}
