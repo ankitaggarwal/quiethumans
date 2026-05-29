@@ -1,0 +1,13 @@
+# Keep the build context small and never ship secrets or local data.
+**/.env
+**/.env.*
+**/.venv
+**/__pycache__
+**/*.pyc
+**/node_modules
+frontend/dist
+backend/*.db
+.git
+.github
+tmp
+*.md

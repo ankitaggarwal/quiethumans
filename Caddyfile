@@ -1,0 +1,12 @@
+# Caddy gets a free HTTPS certificate automatically for this domain, as long as
+# quiethumans.fyi points at this server's IP and ports 80/443 are open.
+# All traffic is forwarded to the "web" container on port 8000.
+quiethumans.fyi {
+	reverse_proxy web:8000
+}
+
+# Optional: also serve the www subdomain (redirects to the apex domain).
+# Uncomment if you point www.quiethumans.fyi at this server too.
+# www.quiethumans.fyi {
+# 	redir https://quiethumans.fyi{uri}
+# }
