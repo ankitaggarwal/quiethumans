@@ -4,6 +4,7 @@ Manages people profiles, crawl queue, embeddings/search, and event logging.
 """
 
 import json
+import threading
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -619,14 +620,26 @@ def approve_person(person_id: int, score: int) -> bool:
         if not row:
             return False
         conn.commit()
-    index_approved_person(person_id, dict(row))
 
-    # Index staged projects and clear from staging table.
-    staged = get_staged_projects(person_id)
-    if staged:
-        index_person_projects(person_id, dict(row), staged)
-    delete_staged_projects(person_id)
+    # Embedding + Qdrant indexing is slow (one LLM round-trip per person and per
+    # project, against a self-hosted endpoint). Do it off the request thread so
+    # the MCP approve call returns immediately instead of hanging/disconnecting.
+    threading.Thread(
+        target=_index_approved_async, args=(person_id, dict(row)), daemon=True
+    ).start()
     return True
+
+
+def _index_approved_async(person_id: int, row: dict):
+    """Index an approved person (profile + staged projects) in the background."""
+    try:
+        index_approved_person(person_id, row)
+        staged = get_staged_projects(person_id)
+        if staged:
+            index_person_projects(person_id, row, staged)
+        delete_staged_projects(person_id)
+    except Exception as e:
+        print(f"  Background indexing failed for person {person_id}: {e}")
 
 
 def reject_person(person_id: int) -> bool:

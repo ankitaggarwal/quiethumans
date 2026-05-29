@@ -202,14 +202,102 @@ FILTERS = {'blocked_subdomain_hosts': ['wordpress.com',
 
 
 import re
+import time
+import threading
 import requests
 from dataclasses import dataclass
 from typing import Optional, Tuple
+from urllib import robotparser
 from urllib.parse import urljoin, urlparse
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from bs4 import BeautifulSoup
 from config import get_headers, render_prompt
+
+
+# ============================================================
+# Polite, robust outbound fetching
+# A single chokepoint for page GETs: respects robots.txt, rate-limits per host,
+# and retries transient failures with backoff. All page fetches route through
+# polite_get() so behaviour is consistent and the crawler is a good web citizen.
+# ============================================================
+CRAWL_DELAY_DEFAULT = 1.0   # min seconds between requests to the same host
+ROBOTS_TIMEOUT = 10         # seconds to fetch robots.txt
+FETCH_RETRIES = 2           # extra attempts after the first, on transient errors
+FETCH_BACKOFF = 0.8         # base backoff seconds (doubles each retry)
+_ROBOTS_UA = "quiethumans"  # token used for robots.txt rule matching
+_RETRY_STATUS = (429, 500, 502, 503, 504)
+
+_robots_cache: dict = {}    # host -> (RobotFileParser | None, crawl_delay | None)
+_last_fetch: dict = {}      # host -> monotonic time the next request may start
+_polite_lock = threading.Lock()
+
+
+def _get_robots(scheme: str, host: str):
+    """Fetch & cache robots.txt for a host. Fails open (allow) if unreachable."""
+    with _polite_lock:
+        if host in _robots_cache:
+            return _robots_cache[host]
+    rp, delay = None, None
+    try:
+        r = requests.get(f"{scheme}://{host}/robots.txt", headers=get_headers(), timeout=ROBOTS_TIMEOUT)
+        if r.status_code == 200 and r.text:
+            rp = robotparser.RobotFileParser()
+            rp.parse(r.text.splitlines())
+            try:
+                delay = rp.crawl_delay(_ROBOTS_UA)
+            except Exception:
+                delay = None
+        # Non-200 (404/401/...) => treat as no restrictions.
+    except requests.RequestException:
+        rp = None  # unreachable robots => allow
+    with _polite_lock:
+        _robots_cache[host] = (rp, delay)
+    return rp, delay
+
+
+def _await_host_slot(host: str, delay: float):
+    """Space out requests to the same host. Reserves the next slot under the lock,
+    then sleeps outside it so different hosts never block each other."""
+    with _polite_lock:
+        now = time.monotonic()
+        start = max(now, _last_fetch.get(host, 0.0))
+        _last_fetch[host] = start + delay
+    wait = start - time.monotonic()
+    if wait > 0:
+        time.sleep(wait)
+
+
+def polite_get(url: str, timeout: int = 15, retries: int = FETCH_RETRIES):
+    """robots-aware, rate-limited GET with retry/backoff. Returns a Response, or
+    None if the host is unparseable, disallowed by robots.txt, or all retries fail."""
+    parsed = urlparse(url)
+    scheme, host = (parsed.scheme or "https"), parsed.netloc.lower()
+    if not host:
+        return None
+
+    rp, robots_delay = _get_robots(scheme, host)
+    try:
+        if rp is not None and not rp.can_fetch(_ROBOTS_UA, url):
+            return None  # disallowed by robots.txt
+    except Exception:
+        pass
+
+    delay = max(CRAWL_DELAY_DEFAULT, robots_delay or 0.0)
+    for attempt in range(retries + 1):
+        _await_host_slot(host, delay)
+        try:
+            resp = requests.get(url, headers=get_headers(), timeout=timeout, allow_redirects=True)
+        except requests.RequestException:
+            if attempt < retries:
+                time.sleep(FETCH_BACKOFF * (2 ** attempt))
+                continue
+            return None
+        if resp.status_code in _RETRY_STATUS and attempt < retries:
+            time.sleep(FETCH_BACKOFF * (2 ** attempt))
+            continue
+        return resp
+    return None
 
 
 @dataclass
@@ -218,6 +306,24 @@ class FilterResult:
     passed: bool
     reason: Optional[str] = None
     normalized_url: Optional[str] = None
+
+
+# Known multi-part public suffixes, so apex domains like "example.co.uk" or
+# "example.co.in" aren't mistaken for subdomains. Not exhaustive (no full PSL),
+# just the common second-level ccTLDs we're likely to encounter.
+MULTI_PART_SUFFIXES = {
+    "co.uk", "org.uk", "me.uk", "ac.uk", "gov.uk", "net.uk", "sch.uk", "ltd.uk", "plc.uk",
+    "co.in", "net.in", "org.in", "gen.in", "firm.in", "ind.in", "ac.in", "edu.in", "gov.in",
+    "com.au", "net.au", "org.au", "edu.au", "gov.au", "id.au",
+    "co.nz", "net.nz", "org.nz", "ac.nz",
+    "co.jp", "ne.jp", "or.jp", "ac.jp", "go.jp", "com.jp",
+    "com.br", "net.br", "org.br",
+    "co.za", "org.za", "web.za",
+    "com.mx", "org.mx", "com.ar", "com.tw", "org.tw", "com.tr", "net.tr", "org.tr",
+    "co.kr", "or.kr", "ne.kr", "com.cn", "net.cn", "org.cn",
+    "co.il", "org.il", "net.il", "com.sg", "edu.sg", "com.hk", "org.hk",
+    "co.id", "web.id", "or.id", "com.ph", "com.my", "com.vn", "co.th", "in.th",
+}
 
 
 class URLFilter:
@@ -234,6 +340,9 @@ class URLFilter:
         self.suspicious_tlds = set(filters.get("suspicious_tlds", []))
         self.blocked_content_patterns = filters.get("blocked_content_patterns", [])
         self.max_redirects = filters.get("max_redirects", 3)
+        # Crawl only apex domains (and www). Reject all other subdomains
+        # (blog.example.com, user.neocities.org, name.github.io, ...).
+        self.reject_subdomains = filters.get("reject_subdomains", True)
 
     def _load_config(self) -> dict:
         return {"filters": FILTERS}
@@ -277,6 +386,9 @@ class URLFilter:
         if re.match(r"^\d+\.\d+\.\d+\.\d+", hostname):
             return FilterResult(False, "IP address, not a domain")
 
+        if self.reject_subdomains and self._is_plain_subdomain(hostname):
+            return FilterResult(False, "Subdomain (only apex domains and www are crawled)")
+
         path = parsed.path.lower()
         skip_extensions = [".pdf", ".jpg", ".jpeg", ".png", ".gif", ".zip", ".mp3", ".mp4", ".exe"]
         if any(path.endswith(ext) for ext in skip_extensions):
@@ -292,6 +404,20 @@ class URLFilter:
                 if prefix and "." not in prefix:
                     return True, host
         return False, None
+
+    def _is_plain_subdomain(self, hostname: str) -> bool:
+        """True for any subdomain other than 'www' (e.g. blog.example.com,
+        user.neocities.org). Apex domains and www.<apex> return False. Uses
+        MULTI_PART_SUFFIXES so apex domains on ccTLDs like example.co.uk are kept."""
+        host = hostname.split(":", 1)[0]  # drop any :port
+        if host.startswith("www."):
+            host = host[4:]
+        labels = host.split(".")
+        if len(labels) <= 2:
+            return False
+        # Registrable domain is 2 labels, or 3 when it ends in a known multi-part suffix.
+        allowed = 3 if ".".join(labels[-2:]) in MULTI_PART_SUFFIXES else 2
+        return len(labels) > allowed
 
 
 _default_filter: Optional[URLFilter] = None
@@ -339,11 +465,12 @@ def crawl_homepage(url: str) -> dict:
         "meta_description": None,
     }
 
-    try:
-        resp = requests.get(url, headers=get_headers(), timeout=30)
-        resp.raise_for_status()
-    except requests.RequestException as e:
-        result["error"] = str(e)
+    resp = polite_get(url, timeout=30)
+    if resp is None:
+        result["error"] = "fetch failed or blocked by robots.txt"
+        return result
+    if resp.status_code >= 400:
+        result["error"] = f"HTTP {resp.status_code}"
         return result
 
     soup = BeautifulSoup(resp.text, "lxml")
@@ -525,8 +652,8 @@ def _extract_links(soup: BeautifulSoup, base_url: str) -> list:
 def _fetch_page(url: str, timeout: int = 15) -> Optional[CrawledPage]:
     """Fetch and parse a single page."""
     try:
-        resp = requests.get(url, headers=get_headers(), timeout=timeout, allow_redirects=True)
-        if resp.status_code != 200:
+        resp = polite_get(url, timeout=timeout)
+        if resp is None or resp.status_code != 200:
             return None
 
         content_type = resp.headers.get("content-type", "").lower()
