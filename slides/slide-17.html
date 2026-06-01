@@ -1,0 +1,28 @@
+<div class="slide-inner">
+  <div class="slide-content" style="justify-content:center;">
+    <div class="kicker anim d1"><svg class="ico"><use href="#i-clock"/></svg> &nbsp;bottleneck 2 · the context cliff</div>
+    <h2 class="head anim-up d2" style="margin-top:12px;">Long prompts fall off a <span class="mark">cliff</span>.</h2>
+    <p class="lead anim-up d3" style="margin-top:12px; max-width:900px; font-size:20px;">Gemma claims 128K tokens of context. On a 16 GB Mac it pages to disk long before that, so I cap each call near <b>16K</b> (a long article's worth).</p>
+
+    <div style="margin-top:30px; display:flex; flex-direction:column; gap:14px; max-width:960px;">
+      <div class="anim-up d4" style="display:flex; align-items:center; gap:18px;">
+        <div style="flex:0 0 190px; font-weight:700; color:var(--ink);">short prompt</div>
+        <div style="flex:1;"><div style="height:32px; width:13%; background:var(--olive); border-radius:8px;"></div></div>
+        <div style="flex:0 0 170px; font-family:var(--font-mono); color:var(--ink-soft);">~6s</div>
+      </div>
+      <div class="anim-up d5" style="display:flex; align-items:center; gap:18px;">
+        <div style="flex:0 0 190px; font-weight:700; color:var(--ink);">~16K · an article</div>
+        <div style="flex:1;"><div style="height:32px; width:100%; background:var(--olive); border-radius:8px;"></div></div>
+        <div style="flex:0 0 170px; font-family:var(--font-mono); color:var(--ink-soft);">~50s · 1/min</div>
+      </div>
+      <div class="anim-up d6" style="display:flex; align-items:center; gap:18px;">
+        <div style="flex:0 0 190px; font-weight:700; color:var(--coral-d);">beyond 16K</div>
+        <div style="flex:1;"><div style="height:32px; width:100%; border:2px dashed var(--coral-d); border-radius:8px; background:repeating-linear-gradient(45deg, transparent 0 8px, rgba(201,116,47,0.12) 8px 16px);"></div></div>
+        <div style="flex:0 0 170px; font-family:var(--font-mono); color:var(--coral-d);">latency collapses</div>
+      </div>
+    </div>
+
+    <p class="lead anim-fade d8" style="font-size:18px; margin-top:26px;">the surprise: writing the answer is cheap (a steady ~30 tok/s). it's <span class="mark">reading the long prompt</span> that's slow, the opposite of cloud APIs, where output costs most.</p>
+  </div>
+  <div class="footer"><div class="brand"><span class="dot"></span> quiet humans</div><span>17 / 22</span></div>
+</div>

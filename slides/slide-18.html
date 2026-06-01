@@ -1,0 +1,27 @@
+<div class="slide-inner">
+  <!-- TODO: confirm the exact embedding-model story (which model, what failed) -->
+  <div class="slide-content" style="justify-content:center;">
+    <div class="kicker anim d1"><svg class="ico"><use href="#i-chip"/></svg> &nbsp;bottleneck 3 · the embedding model</div>
+    <h2 class="head anim-up d2" style="margin-top:14px;">the embedding model wouldn't <span class="mark">play nice</span>.</h2>
+    <p class="lead anim-up d3" style="margin-top:12px; max-width:880px;">
+      a chat model and an embedding model are different beasts. serving <i>both</i> from one local runtime, next to Gemma, did not "just work."
+    </p>
+
+    <div style="display:flex; gap:20px; margin-top:38px;">
+      <div class="card anim-up d4" style="flex:1;">
+        <span class="badge badge--coral"><svg class="ico"><use href="#i-cloudoff"/></svg></span>
+        <h3 class="sub" style="font-size:22px; margin-top:14px;">the snag</h3>
+        <p style="color:var(--ink-soft); margin-top:6px;">the first embedding model wouldn't load cleanly beside Gemma, fought it for memory, and didn't return what I expected.</p>
+      </div>
+      <div class="anim d6" style="align-self:center; flex:0 0 auto; color:var(--ink-soft);"><svg class="ico" style="width:42px;height:42px;"><use href="#i-arrow"/></svg></div>
+      <div class="card anim-up d5" style="flex:1; background:var(--sun); border:2.5px solid var(--olive);">
+        <span class="badge" style="background:#fff;"><svg class="ico"><use href="#i-chip"/></svg></span>
+        <h3 class="sub" style="font-size:22px; margin-top:14px;">the fix</h3>
+        <p style="color:var(--ink-soft); margin-top:6px;">settle on <b>EmbeddingGemma (768d)</b> and run it from the same OpenAI-style endpoint, with its own task prefixes.</p>
+      </div>
+    </div>
+
+    <p class="lead anim-fade d8" style="font-size:18px; margin-top:28px;">lesson: <b>two models on one box is a config fight</b>, not a one-line swap.</p>
+  </div>
+  <div class="footer"><div class="brand"><span class="dot"></span> quiet humans</div><span>18 / 22</span></div>
+</div>
