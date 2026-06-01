@@ -2,10 +2,12 @@
 
 
 
+import os           # to read tunables from the environment (e.g. the per-URL timeout)
 import time          # to measure how long things take, and to pause between rounds
 import argparse      # to read the options you type after the command (e.g. --continuous)
 
 from concurrent.futures import ThreadPoolExecutor, as_completed   # to crawl several sites at once
+from concurrent.futures import TimeoutError as FutureTimeout      # raised when a URL blows past its time budget
 from threading import Lock                                        # keeps shared counters tidy when crawling in parallel
 
 from database import (
@@ -32,6 +34,11 @@ from database import (
 # Thread-safe counters for batch processing statistics.
 _stats_lock = Lock()
 _stats = {"success": 0, "failed": 0, "in_progress": 0}
+
+# Hard wall-clock cap for a single URL. A stalled fetch or a never-returning
+# LLM call must not be able to wedge the whole pipeline: with --workers 1 one
+# hung site would otherwise block every URL behind it forever. Tunable via env.
+URL_TIMEOUT_SECONDS = int(os.getenv("URL_TIMEOUT_SECONDS", "300"))
 
 
 def process_url(url: str, deep_crawl: bool = True, max_pages: int = 50) -> bool:
@@ -208,6 +215,32 @@ def process_url(url: str, deep_crawl: bool = True, max_pages: int = 50) -> bool:
             _stats["in_progress"] -= 1
 
 
+def _process_one(url: str, deep_crawl: bool = True) -> bool:
+    """Run process_url with a hard wall-clock timeout so one slow site can't stall the batch.
+
+    process_url runs in a dedicated worker thread; if it hasn't returned within
+    URL_TIMEOUT_SECONDS we stop waiting, mark the URL failed so it leaves the
+    queue, and move on. Python can't kill a thread blocked in a network/LLM call,
+    so the orphaned thread is abandoned — it exits on its own once that call
+    returns, and reset_stale_in_progress reclaims any queue row it left behind.
+    """
+    executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="urljob")
+    future = executor.submit(process_url, url, deep_crawl)
+    try:
+        return future.result(timeout=URL_TIMEOUT_SECONDS)
+    except FutureTimeout:
+        log_error(url, f"Timed out after {URL_TIMEOUT_SECONDS}s")
+        try:
+            mark_url_crawled(url, success=False, error=f"timeout after {URL_TIMEOUT_SECONDS}s")
+        except Exception as db_err:
+            print(f"  Timeout cleanup failed for {url[:60]}: {db_err}")
+        print(f"  TIMEOUT: {url[:60]} exceeded {URL_TIMEOUT_SECONDS}s - abandoned")
+        return False
+    finally:
+        # Never block on a possibly-hung worker; let it wind down in the background.
+        executor.shutdown(wait=False)
+
+
 def process_batch(batch_size: int = 100, workers: int = 10, deep_crawl: bool = True):
     """Process a batch of URLs from the queue, optionally in parallel."""
 
@@ -232,7 +265,7 @@ def process_batch(batch_size: int = 100, workers: int = 10, deep_crawl: bool = T
         # Sequential processing.
         for url in urls:
             try:
-                success = process_url(url, deep_crawl=deep_crawl)
+                success = _process_one(url, deep_crawl=deep_crawl)
                 with _stats_lock:
                     if success:
                         _stats["success"] += 1
@@ -247,7 +280,7 @@ def process_batch(batch_size: int = 100, workers: int = 10, deep_crawl: bool = T
         # Parallel processing with worker pool.
         with ThreadPoolExecutor(max_workers=workers) as executor:
             future_to_url = {
-                executor.submit(process_url, url, deep_crawl): url
+                executor.submit(_process_one, url, deep_crawl): url
                 for url in urls
             }
 
