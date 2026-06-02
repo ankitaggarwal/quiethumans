@@ -74,6 +74,14 @@ presentation.html
 # Local AI-assistant tooling / notes (not part of the product)
 CLAUDE.md
 CLAUDE.local.md
+HANDOFF.local.md
 
 # Scratch / local-only working files
 tmp/
+
+# LinkedIn project assets (writeups, screenshots, GIFs — local-only)
+linkedin/
+
+# Demo / pipeline explainer (local-only, not part of the product)
+pipeline.html
+PIPELINE.md
