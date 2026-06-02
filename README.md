@@ -4,6 +4,10 @@ A search engine that discovers interesting indie creators by crawling their pers
 websites — focused on people who *build real things* on their own domain, not on
 follower counts or job titles.
 
+🌐 **Live:** [quiethumans.fyi](https://quiethumans.fyi)
+
+![quiet humans — semantic search for the indie web](docs/quiet-humans.gif)
+
 It crawls personal sites, uses a self-hosted LLM to classify and extract structured
 profiles, curates the results (keeping only people who make distinctive things), and
 serves them through semantic search.
