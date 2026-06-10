@@ -3,10 +3,12 @@
 Provides authenticated remote access to approve/reject profiles and edit profile text.
 """
 
+import secrets
+
 from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
 from psycopg2.extras import RealDictCursor
-from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.datastructures import Headers
 from starlette.responses import JSONResponse
 
 from config import MCP_TOKEN
@@ -89,12 +91,29 @@ def reject_profile(id: int) -> dict:
 
 # Authentication middleware
 
-class _BearerAuth(BaseHTTPMiddleware):
-    """Validates Bearer token on each request."""
-    async def dispatch(self, request, call_next):
-        if request.headers.get("authorization", "") != f"Bearer {MCP_TOKEN}":
-            return JSONResponse({"error": "unauthorized"}, status_code=401)
-        return await call_next(request)
+class _BearerAuth:
+    """Validates Bearer token on each request.
+
+    Deliberately a raw ASGI wrapper, NOT Starlette's BaseHTTPMiddleware: that
+    wrapper buffers the response cycle and crashes the MCP SSE transport when a
+    client disconnects (AssertionError: "Unexpected message ...
+    http.response.start"), which kills the session mid-handshake and leaves the
+    client stuck POSTing into a dead session ("Received request before
+    initialization was complete"). A pass-through ASGI gate leaves the
+    long-lived SSE stream alone.
+    """
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] == "http":
+            supplied = Headers(scope=scope).get("authorization", "")
+            if not secrets.compare_digest(supplied, f"Bearer {MCP_TOKEN}"):
+                response = JSONResponse({"error": "unauthorized"}, status_code=401)
+                await response(scope, receive, send)
+                return
+        await self.app(scope, receive, send)
 
 
 def build_mcp_app():
@@ -104,6 +123,4 @@ def build_mcp_app():
     """
     if not MCP_TOKEN:
         return None
-    app = mcp.sse_app()
-    app.add_middleware(_BearerAuth)
-    return app
+    return _BearerAuth(mcp.sse_app())
