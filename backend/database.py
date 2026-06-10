@@ -153,21 +153,24 @@ def get_connection():
     if not DATABASE_URL:
         raise RuntimeError("DATABASE_URL not set")
     params = parse_db_url(DATABASE_URL)
-    # Retry a couple of times — a cloud Postgres can briefly refuse connections.
+    # Retry the connect (not the caller's queries) a couple of times — a cloud
+    # Postgres can briefly refuse connections. Retrying around the yield would
+    # make a query error re-enter the generator and mask it with a RuntimeError.
+    conn = None
     for attempt in range(3):
         try:
             conn = psycopg2.connect(**params)
-            try:
-                yield conn
-            finally:
-                conn.close()
-            return
+            break
         except psycopg2.OperationalError:
             if attempt < 2:
                 import time
                 time.sleep(attempt + 1)
                 continue
             raise
+    try:
+        yield conn
+    finally:
+        conn.close()
 
 
 @contextmanager
@@ -374,7 +377,7 @@ def mark_url_crawled(url: str, success: bool = True, error: str = None):
         cur.execute(
             "UPDATE crawl_queue SET status = %s, attempts = attempts + 1, last_attempt = %s, "
             "error_message = %s WHERE url = %s AND status = 'in_progress'",
-            (status, datetime.utcnow(), error, url))
+            (status, datetime.now(timezone.utc), error, url))
         conn.commit()
 
 
@@ -427,7 +430,7 @@ def check_duplicate_domain(homepage_url: str) -> Optional[dict]:
 
 def upsert_person(data: dict, skip_dedup: bool = False) -> int:
     """Insert or update person record. Returns person id."""
-    data["updated_at"] = datetime.utcnow()
+    data["updated_at"] = datetime.now(timezone.utc)
     for field in _JSON_FIELDS:
         if field in data and isinstance(data[field], (list, dict)):
             data[field] = json.dumps(data[field])
@@ -452,7 +455,7 @@ def upsert_person(data: dict, skip_dedup: bool = False) -> int:
             values.append(existing_url)
             cur.execute(f"UPDATE people SET {', '.join(set_parts)} WHERE homepage_url = %s", values)
         else:
-            data["crawled_at"] = datetime.utcnow()
+            data["crawled_at"] = datetime.now(timezone.utc)
             if not data.get("status"):
                 data["status"] = "pending_review"
             cols = ", ".join(data.keys())
@@ -615,7 +618,7 @@ def approve_person(person_id: int, score: int) -> bool:
             WHERE id = %s
             RETURNING id, name, one_liner, work_summary, current_focus,
                       homepage_url, projects, creative_interests, domains, makes
-        """, (score, datetime.utcnow(), person_id))
+        """, (score, datetime.now(timezone.utc), person_id))
         row = cur.fetchone()
         if not row:
             return False
@@ -647,7 +650,7 @@ def reject_person(person_id: int) -> bool:
     with get_connection() as conn:
         cur = conn.cursor()
         cur.execute("UPDATE people SET status = 'rejected', reviewed_at = %s WHERE id = %s",
-                    (datetime.utcnow(), person_id))
+                    (datetime.now(timezone.utc), person_id))
         conn.commit()
         if cur.rowcount == 0:
             return False
@@ -689,7 +692,7 @@ def update_person_text(person_id: int, fields: dict, conn=None) -> dict:
     def _run(c):
         cur = c.cursor(cursor_factory=RealDictCursor)
         sets = ", ".join(f"{k} = %s" for k in fields) + ", updated_at = %s"
-        vals = list(fields.values()) + [datetime.utcnow(), person_id]
+        vals = list(fields.values()) + [datetime.now(timezone.utc), person_id]
         cur.execute(f"UPDATE people SET {sets} WHERE id = %s RETURNING *", vals)
         return cur.fetchone()
 

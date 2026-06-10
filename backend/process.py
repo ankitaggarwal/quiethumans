@@ -143,7 +143,10 @@ class LocalProvider:
     """Client for calling self-hosted LLM (Gemma). Provides complete() and complete_json() methods."""
 
     def __init__(self, url: str = None, api_key: str = None, model: str = None):
-        self.url = (url or LOCAL_LLM_URL).rstrip("/") + "/v1/chat/completions"
+        base = (url or LOCAL_LLM_URL).rstrip("/")
+        if not base:
+            raise LLMError("LOCAL_LLM_URL is not set")
+        self.url = base + "/v1/chat/completions"
         self.api_key = api_key or LOCAL_LLM_KEY
         self.model = model or LOCAL_LLM_MODEL
         self.name = f"local/{self.model}"
@@ -518,7 +521,11 @@ def fetch_github_enrichment(username: str) -> dict:
         print(f"  GitHub enrich {resp.status_code} for {username}: {resp.text[:120]}")
         return {}
 
-    repos = resp.json()
+    try:
+        repos = resp.json()
+    except ValueError as e:
+        print(f"  GitHub enrich bad JSON for {username}: {e}")
+        return {}
     if not isinstance(repos, list):
         return {}
 

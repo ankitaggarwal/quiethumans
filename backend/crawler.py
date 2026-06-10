@@ -473,6 +473,11 @@ def crawl_homepage(url: str) -> dict:
         result["error"] = f"HTTP {resp.status_code}"
         return result
 
+    content_type = resp.headers.get("content-type", "").lower()
+    if content_type and "html" not in content_type:
+        result["error"] = f"Not HTML: {content_type.split(';')[0]}"
+        return result
+
     soup = BeautifulSoup(resp.text, "lxml")
 
     if soup.title:

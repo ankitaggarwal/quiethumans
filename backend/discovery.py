@@ -717,7 +717,8 @@ class RedditCrawler(SourceCrawler):
         self.max_posts_per_sub = config.get("max_posts_per_sub", 500)
         self.seen_domains: Set[str] = set()
 
-    def _fetch_subreddit(self, subreddit: str, sort: str = "top", limit: int = 100, after: str = None) -> dict:
+    def _fetch_subreddit(self, subreddit: str, sort: str = "top", limit: int = 100, after: str = None,
+                         retries: int = 3) -> dict:
         url = f"https://www.reddit.com/r/{subreddit}/{sort}.json"
         params = {
             "limit": min(limit, 100),
@@ -731,9 +732,12 @@ class RedditCrawler(SourceCrawler):
             response = self.session.get(url, params=params, timeout=30)
 
             if response.status_code == 429:
+                if retries <= 0:
+                    print(f"  Rate limited on r/{subreddit}, giving up")
+                    return {"data": {"children": [], "after": None}}
                 print(f"  Rate limited on r/{subreddit}, waiting 60s...")
                 time.sleep(60)
-                return self._fetch_subreddit(subreddit, sort, limit, after)
+                return self._fetch_subreddit(subreddit, sort, limit, after, retries - 1)
 
             response.raise_for_status()
             return response.json()

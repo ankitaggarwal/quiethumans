@@ -1,5 +1,6 @@
 """API server for Discover Interesting Humans: data queries, curation UI, and static hosting."""
 
+import json
 import re
 from datetime import date
 from pathlib import Path
@@ -326,7 +327,7 @@ async def search(
                 person_ids = list(rank.keys())[:limit]
 
                 with get_db() as conn:
-                    if conn:
+                    if conn and person_ids:
                         cur = conn.cursor(cursor_factory=RealDictCursor)
                         if IS_SQLITE:
                             in_clause = ",".join("%s" for _ in person_ids)
@@ -451,6 +452,17 @@ def _sanitize_content(text: str) -> str:
     return result
 
 
+def _as_list(value) -> list:
+    """Coerce a JSON field to a list. SQLite stores JSON as TEXT, so values may
+    arrive as serialized strings; Postgres JSONB arrives already parsed."""
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except (json.JSONDecodeError, ValueError):
+            return []
+    return value if isinstance(value, list) else []
+
+
 def _format_person(p: dict) -> dict:
     """Extract and sanitize person fields for API response."""
     return {
@@ -464,10 +476,10 @@ def _format_person(p: dict) -> dict:
         "unique_angle": _sanitize_content(p.get("unique_angle")),
         "current_focus": _sanitize_content(p.get("current_focus")),
         "category": p.get("category") or "other",
-        "projects": p.get("projects") or [],
-        "creative_interests": p.get("creative_interests") or [],
-        "domains": p.get("domains") or [],
-        "makes": p.get("makes") or [],
+        "projects": _as_list(p.get("projects")),
+        "creative_interests": _as_list(p.get("creative_interests")),
+        "domains": _as_list(p.get("domains")),
+        "makes": _as_list(p.get("makes")),
     }
 
 
@@ -499,9 +511,14 @@ if STATIC_DIR.exists() and (STATIC_DIR / "index.html").exists():
 
     @app.get("/{full_path:path}")
     async def serve_spa(full_path: str):
-        file_path = STATIC_DIR / full_path
-        if file_path.exists() and file_path.is_file():
-            return FileResponse(file_path)
+        # Resolve and confirm the path stays inside STATIC_DIR — otherwise an
+        # encoded "../" in the URL could serve arbitrary files (e.g. .env).
+        try:
+            file_path = (STATIC_DIR / full_path).resolve()
+            if file_path.is_relative_to(STATIC_DIR.resolve()) and file_path.is_file():
+                return FileResponse(file_path)
+        except (OSError, ValueError):
+            pass
         return FileResponse(STATIC_DIR / "index.html")
 else:
     @app.get("/")

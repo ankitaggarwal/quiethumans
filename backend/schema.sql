@@ -27,6 +27,10 @@ CREATE TABLE IF NOT EXISTS people (
     social_links           JSONB,
     status                 TEXT DEFAULT 'pending_review',
     interestingness_score  INTEGER,
+    review_reason          TEXT,
+    review_highlights      JSONB,
+    review_red_flags       JSONB,
+    score_breakdown        JSONB,
     reviewed_by            TEXT,
     reviewed_at            TIMESTAMPTZ,
     crawled_at             TIMESTAMPTZ,
@@ -34,6 +38,12 @@ CREATE TABLE IF NOT EXISTS people (
     created_at             TIMESTAMPTZ DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_people_status ON people(status);
+
+-- Review columns added after the original schema; bring older databases up to date.
+ALTER TABLE people ADD COLUMN IF NOT EXISTS review_reason TEXT;
+ALTER TABLE people ADD COLUMN IF NOT EXISTS review_highlights JSONB;
+ALTER TABLE people ADD COLUMN IF NOT EXISTS review_red_flags JSONB;
+ALTER TABLE people ADD COLUMN IF NOT EXISTS score_breakdown JSONB;
 
 -- The crawl to-do list.
 CREATE TABLE IF NOT EXISTS crawl_queue (

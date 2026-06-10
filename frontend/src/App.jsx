@@ -20,7 +20,9 @@ function App() {
   const [showCrawlerLog, setShowCrawlerLog] = useState(false)
   const [crawlerEvents, setCrawlerEvents] = useState([])
   const [newApprovalCount, setNewApprovalCount] = useState(0)
-  const [lastKnownCount, setLastKnownCount] = useState(null)
+  // Ref, not state: read/written inside polling intervals whose closures would
+  // otherwise capture a stale value and never detect new approvals.
+  const lastKnownCountRef = useRef(null)
   const [categories, setCategories] = useState([])
   const [selectedCategory, setSelectedCategory] = useState(null)
   const [featuredPerson, setFeaturedPerson] = useState(null)
@@ -182,14 +184,15 @@ function App() {
       const data = await res.json()
 
       // Detect new approvals
-      if (lastKnownCount !== null && data.with_work_summary > lastKnownCount) {
-        const newCount = data.with_work_summary - lastKnownCount
+      const last = lastKnownCountRef.current
+      if (last !== null && data.with_work_summary > last) {
+        const newCount = data.with_work_summary - last
         setNewApprovalCount(prev => prev + newCount)
         // Auto-clear notification after 5 seconds
         setTimeout(() => setNewApprovalCount(0), 5000)
       }
 
-      setLastKnownCount(data.with_work_summary)
+      lastKnownCountRef.current = data.with_work_summary
       setStats(data)
     } catch (e) {
       console.error('Failed to fetch stats:', e)
@@ -294,9 +297,9 @@ function App() {
       const res = await fetch(`${API_URL}/stats`)
       const data = await res.json()
       setStats(data)
-      // Initialize lastKnownCount on first fetch
-      if (lastKnownCount === null) {
-        setLastKnownCount(data.with_work_summary)
+      // Initialize the baseline on first fetch
+      if (lastKnownCountRef.current === null) {
+        lastKnownCountRef.current = data.with_work_summary
       }
     } catch (e) {
       console.error('Failed to fetch stats:', e)
@@ -395,11 +398,10 @@ function App() {
 
       if (controller.signal.aborted) return
 
-      if (Array.isArray(data)) {
-        setPeople(data)
-      } else {
-        setPeople([])
-      }
+      const newPeople = data.people || []
+      setPeople(newPeople)
+      setOffset(newPeople.length)
+      setHasMore(Boolean(data.has_more))
       setLoading(false)
     } catch (e) {
       if (e.name === 'AbortError') return
