@@ -7,7 +7,8 @@ SOURCES = {'nownownow': {'enabled': True,
                'url': 'https://nownownow.com',
                'description': "Derek Sivers' directory of /now pages",
                'priority': 1,
-               'rate_limit': 1.0},
+               'rate_limit': 1.0,
+               'max_pages': 200},
  'personalsites': {'enabled': True,
                    'type': 'personalsites',
                    'url': 'https://personalsit.es',
@@ -44,7 +45,7 @@ SOURCES = {'nownownow': {'enabled': True,
                'description': 'Neocities hosting platform',
                'priority': 3,
                'rate_limit': 2.0,
-               'max_pages': 100},
+               'max_pages': 200},
  'hackernews': {'enabled': True,
                 'type': 'hackernews',
                 'url': 'https://news.ycombinator.com',
@@ -89,7 +90,7 @@ from abc import ABC, abstractmethod
 from typing import Iterator, Optional, Set
 from dataclasses import dataclass
 from bs4 import BeautifulSoup
-from config import get_headers
+from config import get_headers, GITHUB_TOKEN
 from crawler import is_crawlable, extract_homepage, normalize_domain
 
 
@@ -154,16 +155,7 @@ class GitHubAwesomeCrawler(SourceCrawler):
         """Crawl a GitHub awesome list README."""
         print(f"Crawling {self.name}: {self.url}")
 
-        # Convert GitHub URL to raw README URL
-        # https://github.com/user/repo -> https://raw.githubusercontent.com/user/repo/main/README.md
-        raw_url = self._get_raw_url()
-
-        content = self.fetch(raw_url)
-        if not content:
-            # Try master branch
-            raw_url = raw_url.replace("/main/", "/master/")
-            content = self.fetch(raw_url)
-
+        content = self._fetch_readme()
         if not content:
             print("  Could not fetch README")
             return
@@ -218,13 +210,37 @@ class GitHubAwesomeCrawler(SourceCrawler):
 
         print(f"  Found {count} personal sites")
 
-    def _get_raw_url(self) -> str:
-        """Convert GitHub URL to raw content URL."""
-        # https://github.com/user/repo -> https://raw.githubusercontent.com/user/repo/main/README.md
-        url = self.url.replace("github.com", "raw.githubusercontent.com")
-        if not url.endswith("/"):
-            url += "/"
-        return url + "main/README.md"
+    def _fetch_readme(self) -> Optional[str]:
+        """Resolve and fetch the repo's README via the GitHub API.
+
+        The API's /readme endpoint returns whatever the README is actually
+        named (e.g. lowercase `readme.md`) on the default branch, so we don't
+        have to guess main/master or the file's casing.
+        """
+        m = re.search(r"github\.com/([^/]+)/([^/]+)", self.url)
+        if not m:
+            return None
+        owner, repo = m.group(1), m.group(2).rstrip("/")
+
+        headers = get_headers()
+        headers["Accept"] = "application/vnd.github+json"
+        if GITHUB_TOKEN:
+            headers["Authorization"] = f"Bearer {GITHUB_TOKEN}"
+
+        self._rate_limit_wait()
+        try:
+            resp = self.session.get(
+                f"https://api.github.com/repos/{owner}/{repo}/readme",
+                headers=headers, timeout=15)
+            resp.raise_for_status()
+            download_url = resp.json().get("download_url")
+        except (requests.RequestException, ValueError) as e:
+            print(f"  Error resolving README for {owner}/{repo}: {e}")
+            return None
+
+        if not download_url:
+            return None
+        return self.fetch(download_url)
 
 
 class HackerNewsCrawler(SourceCrawler):
@@ -242,7 +258,8 @@ class HackerNewsCrawler(SourceCrawler):
         ])
         self.seen_domains: Set[str] = set()
 
-    def _search_stories(self, query: str = None, page: int = 0, by_date: bool = True) -> dict:
+    def _search_stories(self, query: str = None, page: int = 0, by_date: bool = True,
+                         before: int = None) -> dict:
         endpoint = "search_by_date" if by_date else "search"
         url = f"{self.ALGOLIA_BASE}/{endpoint}"
 
@@ -253,6 +270,11 @@ class HackerNewsCrawler(SourceCrawler):
         }
         if query:
             params["query"] = query
+        # Algolia caps each query at 1000 retrievable hits regardless of paging.
+        # To walk further back than that, window by creation time: ask only for
+        # stories older than the oldest one we've already seen.
+        if before:
+            params["numericFilters"] = f"created_at_i<{before}"
 
         try:
             self._rate_limit_wait()
@@ -291,45 +313,48 @@ class HackerNewsCrawler(SourceCrawler):
                 }
             )
 
-    def _crawl_all_stories(self, max_pages: int = None) -> Iterator[DiscoveredURL]:
-        max_pages = max_pages or self.max_pages
-        print(f"  Crawling all HN stories (up to {max_pages} pages)...")
+    def _crawl_windowed(self, source_tag: str, query: str = None,
+                        max_windows: int = None) -> Iterator[DiscoveredURL]:
+        """Walk HN history backwards in time, one ~1000-story window at a time.
 
-        for page in range(max_pages):
-            result = self._search_stories(page=page, by_date=True)
+        Algolia only ever returns the first 1000 hits of a query, so simple
+        page-based paging stalls after one page. Instead we sort by date and,
+        after each batch, move the `created_at_i<` cursor to the oldest story we
+        just saw — letting us page through all 3.6M+ stories.
+        """
+        max_windows = max_windows or self.max_pages
+        label = f"'{query}'" if query else "all stories"
+        print(f"  Crawling HN {label} (up to {max_windows} time windows)...")
+
+        before = None
+        for window in range(max_windows):
+            result = self._search_stories(query=query, page=0, by_date=True, before=before)
             hits = result.get("hits", [])
-            total_pages = result.get("nbPages", 0)
-
             if not hits:
                 break
 
-            yield from self._process_hits(hits, "hackernews")
+            yield from self._process_hits(hits, source_tag)
 
-            if page % 10 == 0:
-                print(f"  Page {page}/{total_pages}, discovered {len(self.seen_domains)} unique domains")
-
-            if page >= total_pages - 1:
+            # Advance the cursor to just before the oldest story in this batch.
+            timestamps = [h.get("created_at_i") for h in hits if h.get("created_at_i")]
+            if not timestamps:
                 break
+            oldest = min(timestamps)
+            if before is not None and oldest >= before:
+                break  # no forward progress — we've hit the tail
+            before = oldest
+
+            if window % 10 == 0:
+                print(f"  Window {window}/{max_windows} (before {oldest}), "
+                      f"{len(self.seen_domains)} unique domains")
+
+    def _crawl_all_stories(self, max_pages: int = None) -> Iterator[DiscoveredURL]:
+        yield from self._crawl_windowed("hackernews", query=None, max_windows=max_pages)
 
     def _crawl_show_hn(self, max_pages: int = None) -> Iterator[DiscoveredURL]:
-        max_pages = max_pages or min(self.max_pages, 500)
-        print(f"  Crawling Show HN posts (up to {max_pages} pages)...")
-
-        for page in range(max_pages):
-            result = self._search_stories(query="Show HN", page=page, by_date=True)
-            hits = result.get("hits", [])
-            total_pages = result.get("nbPages", 0)
-
-            if not hits:
-                break
-
-            yield from self._process_hits(hits, "hackernews_showhn")
-
-            if page % 10 == 0:
-                print(f"  Show HN page {page}/{total_pages}")
-
-            if page >= total_pages - 1:
-                break
+        yield from self._crawl_windowed(
+            "hackernews_showhn", query="Show HN",
+            max_windows=max_pages or min(self.max_pages, 500))
 
     def _crawl_search_queries(self) -> Iterator[DiscoveredURL]:
         for query in self.search_queries:
@@ -433,6 +458,11 @@ class NeocitiesCrawler(SourceCrawler):
         count = 0
         page = 1
 
+        # Each site's own subdomain. The browse markup wraps a card in the link
+        # (rather than nesting the link inside a "site-*" box), so just pull every
+        # *.neocities.org link off the page and dedupe.
+        site_link_re = re.compile(r"^https?://([a-z0-9][a-z0-9-]*)\.neocities\.org/?$", re.I)
+
         while page <= self.max_pages:
             # Neocities has pagination
             page_url = f"{self.url}?page={page}"
@@ -444,28 +474,19 @@ class NeocitiesCrawler(SourceCrawler):
 
             soup = self.parse_html(html)
 
-            # Find site entries
             sites_on_page = 0
-            for site_box in soup.find_all("div", class_=re.compile(r"site-")):
-                # Find the link to the site
-                link = site_box.find("a", href=re.compile(r"https://.*\.neocities\.org"))
-                if not link:
-                    continue
-
+            for link in soup.find_all("a", href=site_link_re):
                 href = link["href"]
+                # Skip the platform's own www subdomain, keep real user sites.
+                if href.rstrip("/").endswith("//www.neocities.org") or "www.neocities.org" in href:
+                    continue
                 url = href.rstrip("/")
 
                 if url in seen_urls:
                     continue
                 seen_urls.add(url)
 
-                # Get site name/title
-                title_elem = site_box.find(class_=re.compile(r"title|name"))
-                name = title_elem.get_text(strip=True) if title_elem else None
-
-                # Get description if available
-                desc_elem = site_box.find(class_=re.compile(r"desc|description"))
-                description = desc_elem.get_text(strip=True) if desc_elem else None
+                name = link.get_text(strip=True) or None
 
                 sites_on_page += 1
                 count += 1
@@ -474,10 +495,7 @@ class NeocitiesCrawler(SourceCrawler):
                     url=url,
                     source="neocities",
                     name=name,
-                    metadata={
-                        "description": description,
-                        "platform": "neocities"
-                    }
+                    metadata={"platform": "neocities"},
                 )
 
             # If no sites found on page, we've reached the end
